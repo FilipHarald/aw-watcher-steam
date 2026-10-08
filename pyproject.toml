@@ -1,14 +1,14 @@
 [tool.poetry]
 name = "aw-watcher-steam"
-version = "0.0.1"
-description = "Steam watcher for ActivitiyWatch"
+version = "0.1.0"
+description = "Steam presence watcher for ActivityWatch"
 authors = ["Edward <edwardsoen@gmail.com>"]
 packages = [{include = "aw_watcher_steam"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-requests = "^2.30.0"
-aw-client = "^0.5.12"
+python = ">=3.10,<4.0"
+requests = ">=2.30,<3"
+aw-client = ">=0.5.15,<0.6"
 
 [build-system]
 requires = ["poetry-core"]
@@ -16,3 +16,6 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 aw-watcher-steam = "aw_watcher_steam:main"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"

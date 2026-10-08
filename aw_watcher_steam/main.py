@@ -1,75 +1,122 @@
-import requests
-from datetime import datetime, timedelta, timezone
-from time import sleep
-from aw_core.models import Event
+import argparse
 import logging
+import signal
+from datetime import datetime, timezone
+from pathlib import Path
+from time import sleep
+
+import requests
 from aw_client import ActivityWatchClient
-from aw_core import dirs 
-import traceback
-import sys
+from aw_core import dirs
+from aw_core.models import Event
 
 
 CONFIG = """
 [aw-watcher-steam]
 steam_id = ""
 api_key = ""
-poll_time = 5.0"""
+poll_time = 5.0
+"""
+STEAM_API_URL = "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/"
 
 
 def load_config():
-    from aw_core.config import load_config_toml as _load_config
-    return _load_config("aw-watcher-steam", CONFIG)
+    from aw_core.config import load_config_toml
+
+    return load_config_toml("aw-watcher-steam", CONFIG)
 
 
-def get_currently_played_games(api_key, steam_id) -> dict:
-    url = f"http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key={api_key}&steamids={steam_id}"
-    response = requests.get(url=url)
-    data = {}
-    if response.status_code == 200: 
-        response_data = response.json()["response"]["players"][0]
-        if "gameextrainfo" in response_data: 
-            data["currently-playing-game"] = response_data["gameextrainfo"]
-            data["game-id"] = response_data["gameid"]
-        return data
-    raise Exception("Steam API request error, error code:" + str(response.status_code) + " " + response.text)
+def get_currently_played_game(api_key: str, steam_id: str) -> dict:
+    response = requests.get(
+        STEAM_API_URL,
+        params={"key": api_key, "steamids": steam_id},
+        timeout=15,
+    )
+    response.raise_for_status()
+    players = response.json().get("response", {}).get("players", [])
+    if not players:
+        raise RuntimeError("Steam returned no player for the configured steam_id")
 
-def main(): 
+    player = players[0]
+    if "gameextrainfo" not in player:
+        return {}
+    return {
+        "currently-playing-game": player["gameextrainfo"],
+        "game-id": player["gameid"],
+    }
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Track Steam presence in ActivityWatch")
+    parser.add_argument("--host", help="ActivityWatch server host")
+    parser.add_argument("--port", type=int, help="ActivityWatch server port")
+    parser.add_argument("--testing", action="store_true", help="use the testing server")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logger = logging.getLogger("aw-watcher-steam")
-    config_dir = dirs.get_config_dir("aw-watcher-steam")
-    config = load_config()
-    poll_time = float(config["aw-watcher-steam"].get("poll_time"))
-    api_key = config["aw-watcher-steam"].get("api_key", '')
-    steam_id = config["aw-watcher-steam"].get("steam_id", '')
-    if api_key == '' or steam_id == '': 
-        logger.warning(f"steam_id or api_key not specified in config file (in folder {config_dir}), get your api here: https://steamcommunity.com/dev/apikey")
-        sys.exit(1)
-    client = ActivityWatchClient("aw-watcher-steam", testing=False)
-    bucket_name = "{}_{}".format(client.client_name, client.client_hostname)    
-    client.create_bucket(bucket_name, event_type="currently-playing-game")
-    client.connect()
-    while True:
-        game_data = {}
-        try: 
-            game_data = get_currently_played_games(api_key=api_key,steam_id=steam_id)
-        except Exception as e: 
-            logger.error("Error fetching data" + str(e))
-            logger.error(traceback.format_exc())
-            sleep(0.1)
-            continue
-        try: 
-            if game_data: 
-                now = datetime.now(timezone.utc)
-                event = Event(timestamp=now, data = game_data)
-                client.heartbeat(bucket_name, event= event, pulsetime= poll_time + 1, queued=True)
-                currently_playing_game = game_data["currently-playing-game"]
-                print(f"Currently playing {currently_playing_game}")
-            else: 
-                print("Currently not playing any game")
-        except Exception as e: 
-            print("Unexpected error occured " + e)
-        sleep(poll_time)
+    config = load_config()["aw-watcher-steam"]
+    poll_time = float(config.get("poll_time", 5.0))
+    api_key = str(config.get("api_key", "")).strip()
+    steam_id = str(config.get("steam_id", "")).strip()
+    config_file = Path(dirs.get_config_dir("aw-watcher-steam")) / "aw-watcher-steam.toml"
 
-if __name__ == "__main__": 
-    main()
-    
-    
+    if not api_key or not steam_id:
+        logger.error("Set steam_id and api_key in %s", config_file)
+        return 1
+    if poll_time <= 0:
+        logger.error("poll_time must be greater than zero in %s", config_file)
+        return 1
+
+    stopping = False
+
+    def stop(_signum, _frame):
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+
+    client = ActivityWatchClient(
+        "aw-watcher-steam",
+        testing=args.testing,
+        host=args.host,
+        port=args.port,
+    )
+    bucket_id = f"{client.client_name}_{client.client_hostname}"
+    client.create_bucket(bucket_id, event_type="currently-playing-game")
+
+    last_status = None
+    with client:
+        while not stopping:
+            try:
+                game_data = get_currently_played_game(api_key, steam_id)
+                if game_data:
+                    event = Event(timestamp=datetime.now(timezone.utc), data=game_data)
+                    client.heartbeat(
+                        bucket_id,
+                        event,
+                        pulsetime=poll_time + 1,
+                        queued=True,
+                        commit_interval=max(30.0, poll_time * 2),
+                    )
+                status = game_data.get("currently-playing-game", "not playing")
+                if status != last_status:
+                    logger.info("Steam status: %s", status)
+                    last_status = status
+            except requests.RequestException as error:
+                logger.warning("Steam API request failed: %s", error)
+            except (KeyError, ValueError, RuntimeError) as error:
+                logger.warning("Invalid Steam API response: %s", error)
+
+            if not stopping:
+                sleep(poll_time)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

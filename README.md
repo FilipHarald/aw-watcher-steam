@@ -1,38 +1,55 @@
 # aw-watcher-steam
-<a href ="https://activitywatch.net/">ActivityWatch</a> watcher to watch your currently playing Steam game. Steam allows you to see your total hour spent per game, but not the exact timeline, this watcher attempt to log the timeline of Steam game activity. 
 
+An [ActivityWatch](https://activitywatch.net/) watcher that records the Steam
+game shown in your online presence. This works across devices, provided your
+Steam game details are public and the machine running the watcher is online.
 
-This watcher will log your play time accross devices so long it has internet connection 
-
-
-In order for this to watcher work you need to either set your game details settings to public or register Steam WebAPI with the same account 
-
-## Usage 
-### Step 0: Get Steam API key
-<a href = "https://steamcommunity.com/dev/apikey">Register Steam API key.</a> 
-
-
-Enter localhost as domain name
-
-:warning: If you're using Steam Guard Mobile authenticator you will need to choose the menu and then "Confirmations". You will not receive a regular approval notification.
-
-### Step 1: Find Steam ID
-Find your 17 digits steam ID <a href = "https://help.steampowered.com/en/faqs/view/2816-BE67-5B69-0FEC">here</a>. 
-
-### Step 2: Install package (without poetry, using only pip)
-
-Install the requirements:
+## Install
 
 ```sh
-pip install .
+pipx install .
 ```
 
-### Step 3: Restart ActivityWatch and click on aw-watcher-steam 
+For an editable development install, use `pipx install --editable .`.
 
-![image](https://github.com/Edwardsoen/aw-watcher-steam/assets/70268484/34ce2803-d564-46e2-bc08-399bcc0ed828)
+## Configure
 
-### Step 4: Fill config file
-Find the config file in <a href = "https://docs.activitywatch.net/en/latest/directories.html#config"> config directory</a> and fill accordingly. 
+Run `aw-watcher-steam` once to create the config, then edit:
 
+```text
+~/.config/activitywatch-default/aw-watcher-steam/aw-watcher-steam.toml
+```
 
+```toml
+[aw-watcher-steam]
+steam_id = "YOUR_17_DIGIT_STEAM_ID"
+api_key = "YOUR_STEAM_WEB_API_KEY"
+poll_time = 5.0
+```
 
+The `activitywatch-default` directory is used when the watcher is launched by
+current `aw-tauri` releases, which pass the `default` ActivityWatch profile.
+
+- Register a Steam Web API key at https://steamcommunity.com/dev/apikey
+  (`localhost` is fine as the domain).
+- Find your Steam ID at https://help.steampowered.com/en/faqs/view/2816-BE67-5B69-0FEC
+
+## Start with aw-tauri
+
+`aw-tauri` discovers the executable in `~/.local/bin`. Add it to
+`~/.config/activitywatch/aw-tauri/config.toml`:
+
+```toml
+[autostart]
+modules = ["aw-awatcher", "aw-watcher-steam"]
+```
+
+Restart `aw-tauri`, or start the watcher from its **Modules** tray submenu.
+
+## Command-line options
+
+```text
+--host HOST     ActivityWatch server host
+--port PORT     ActivityWatch server port
+--testing       Use ActivityWatch's testing server
+```
